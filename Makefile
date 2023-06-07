@@ -18,7 +18,7 @@ $(GIT_HOOKS):
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
-	$(RM) client out
+	$(RM) client out performance.txt performance.png
 load:
 	sudo insmod $(TARGET_MODULE).ko
 unload:
@@ -39,3 +39,4 @@ check: all
 	$(MAKE) unload
 	@diff -u out scripts/expected.txt && $(call pass)
 	@scripts/verify.py
+	@gnuplot scripts/performance.gp

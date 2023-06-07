@@ -4,6 +4,7 @@
 #include <linux/init.h>
 #include <linux/kdev_t.h>
 #include <linux/kernel.h>
+#include <linux/ktime.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 
@@ -18,11 +19,15 @@ MODULE_VERSION("0.1");
  * ssize_t can't fit the number > 92
  */
 #define MAX_LENGTH 1000
+#define KERNEL_TIME 0
+#define COPY_TO_USER_TIME 1
 
 static dev_t fib_dev = 0;
 static struct cdev *fib_cdev;
 static struct class *fib_class;
 static DEFINE_MUTEX(fib_mutex);
+static long long kernel_time = 0;
+static long long copy_to_user_time = 0;
 
 static void reverse(char *str)
 {
@@ -79,14 +84,18 @@ static void sum(char *a, char *b, char *c)
 
 static long long fib_sequence(long long k, char *buf)
 {
+    ktime_t start_time, end_time;
     char f[3][256] = {0};
 
     snprintf(f[0], sizeof(f[0]), "%d", 0);
     snprintf(f[1], sizeof(f[1]), "%d", 1);
     if (k < 2) {
+        start_time = ktime_get();
         if (copy_to_user(buf, f[k], sizeof(f[k]))) {
             return -EFAULT;
         }
+        end_time = ktime_get();
+        copy_to_user_time = ktime_to_ns(ktime_sub(end_time, start_time));
         return sizeof(f[k]);
     }
 
@@ -99,9 +108,12 @@ static long long fib_sequence(long long k, char *buf)
     }
 
     reverse(f[2]);
+    start_time = ktime_get();
     if (copy_to_user(buf, f[2], sizeof(f[2]))) {
         return -EFAULT;
     }
+    end_time = ktime_get();
+    copy_to_user_time = ktime_to_ns(ktime_sub(end_time, start_time));
 
     return sizeof(f[2]);
 }
@@ -127,7 +139,12 @@ static ssize_t fib_read(struct file *file,
                         size_t size,
                         loff_t *offset)
 {
-    return (ssize_t) fib_sequence(*offset, buf);
+    ktime_t start_time, end_time;
+    start_time = ktime_get();
+    ssize_t ret = (ssize_t) fib_sequence(*offset, buf);
+    end_time = ktime_get();
+    kernel_time = ktime_to_ns(ktime_sub(end_time, start_time));
+    return ret;
 }
 
 /* write operation is skipped */
@@ -136,7 +153,16 @@ static ssize_t fib_write(struct file *file,
                          size_t size,
                          loff_t *offset)
 {
-    return 1;
+    ssize_t ret = -1;
+    switch (*offset) {
+    case KERNEL_TIME:
+        ret = kernel_time;
+        break;
+    case COPY_TO_USER_TIME:
+        ret = copy_to_user_time;
+        break;
+    }
+    return ret;
 }
 
 static loff_t fib_device_lseek(struct file *file, loff_t offset, int orig)
